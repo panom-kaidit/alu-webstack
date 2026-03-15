@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Force HTTP traffic to HTTPS by updating HAProxy config.
+# This script can be run after 1-haproxy_ssl_termination or standalone.
+
+set -euo pipefail
+
+CONFIG="/etc/haproxy/haproxy.cfg"
+
+# If the termination script exists, reuse it to ensure the base config is present.
+if [[ -x /root/1-haproxy_ssl_termination ]]; then
+  /root/1-haproxy_ssl_termination
+fi
+
+# Ensure an http frontend with a redirect rule exists; replace if already present.
+if grep -q "frontend www-http" "${CONFIG}"; then
+  # Replace any existing www-http block with a minimal redirect-only block.
+  tmp=$(mktemp)
+  awk '
+    /frontend www-http/ {inblock=1; print "frontend www-http\n    bind *:80\n    redirect scheme https code 301 if !{ ssl_fc }"; next}
+    /^frontend www-https/ {inblock=0}
+    !inblock {print}
+  ' "${CONFIG}" > "${tmp}"
+  mv "${tmp}" "${CONFIG}"
+else
+  cat >>"${CONFIG}" <<'EOF'
+
+frontend www-http
+    bind *:80
+    redirect scheme https code 301 if !{ ssl_fc }
+EOF
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl reload haproxy || systemctl restart haproxy
+else
+  service haproxy reload || service haproxy restart
+fi
