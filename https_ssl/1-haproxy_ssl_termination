@@ -1,24 +1,3 @@
-#!/usr/bin/env bash
-# Configure HAProxy for SSL termination on port 443 for holberton.online
-# Assumes a PEM bundle (fullchain + privkey) is present or already handled upstream.
-
-set -euo pipefail
-
-CERT_DIR="/etc/haproxy/certs"
-CERT_FILE="${CERT_DIR}/holberton.online.pem"
-BACKEND_WEB01_IP="3.83.153.109"
-BACKEND_WEB02_IP="13.218.53.237"
-
-# Ensure certificate directory exists; the grader usually places the PEM for us.
-mkdir -p "${CERT_DIR}"
-
-# If certbot layout exists, build the PEM bundle HAProxy expects.
-if [[ -f /etc/letsencrypt/live/holberton.online/fullchain.pem && -f /etc/letsencrypt/live/holberton.online/privkey.pem ]]; then
-  cat /etc/letsencrypt/live/holberton.online/fullchain.pem \
-      /etc/letsencrypt/live/holberton.online/privkey.pem > "${CERT_FILE}"
-fi
-
-cat >/etc/haproxy/haproxy.cfg <<EOF
 global
     log /dev/log local0
     log /dev/log local1 notice
@@ -39,25 +18,26 @@ defaults
     timeout connect 5000
     timeout client  50000
     timeout server  50000
+    errorfile 400 /etc/haproxy/errors/400.http
+    errorfile 403 /etc/haproxy/errors/403.http
+    errorfile 408 /etc/haproxy/errors/408.http
+    errorfile 500 /etc/haproxy/errors/500.http
+    errorfile 502 /etc/haproxy/errors/502.http
+    errorfile 503 /etc/haproxy/errors/503.http
+    errorfile 504 /etc/haproxy/errors/504.http
 
+# Force cleartext HTTP to HTTPS
 frontend www-http
     bind *:80
     redirect scheme https code 301 if !{ ssl_fc }
 
+# SSL termination frontend
 frontend www-https
-    bind *:443 ssl crt ${CERT_FILE}
+    bind *:443 ssl crt /etc/haproxy/certs/holberton.online.pem
     http-request set-header X-Forwarded-Proto https
-    default_backend web-servers
+    default_backend web-backend
 
-backend web-servers
+backend web-backend
     balance roundrobin
-    server web-01 ${BACKEND_WEB01_IP}:80 check
-    server web-02 ${BACKEND_WEB02_IP}:80 check
-EOF
-
-# Reload HAProxy to pick up the configuration; fall back to restart if needed.
-if command -v systemctl >/dev/null 2>&1; then
-  systemctl reload haproxy || systemctl restart haproxy
-else
-  service haproxy reload || service haproxy restart
-fi
+    server web-01 3.83.153.109:80 check
+    server web-02 13.218.53.237:80 check
